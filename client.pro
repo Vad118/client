@@ -11,6 +11,7 @@ QT       -= gui
 TARGET = client
 CONFIG   += console
 CONFIG   -= app_bundle
+CONFIG += static
 
 TEMPLATE = app
 
@@ -24,3 +25,5 @@ LIBS += "C:/Program Files (x86)/Lua/5.1/lib/lua51.dll" \
         "C:/Program Files (x86)/Lua/5.1/lib/lua5.1.dll"
 
 LIBS     += -lws2_32
+LIBS += -static-libgcc
+QMAKE_LFLAGS = -static

@@ -1,16 +1,3 @@
-/*#include <QCoreApplication>
-
-int main(int argc, char *argv[])
-{
-    QCoreApplication a(argc, argv);
-
-    return a.exec();
-}
-*/
-
-//test comment
-//Client
-
 #include <iostream>
 #include <stdlib.h>
 #include <winsock2.h>
@@ -30,7 +17,7 @@ extern "C"
 
 using namespace std;
 
-enum{STR_SIZE=256,PORT=7500,ARBITERS_MAX=100};
+enum{STR_SIZE=256,PORT=7500,PORT_MONITORING=7501, ARBITERS_MAX=100};
 
 struct actor
 {
@@ -90,12 +77,13 @@ private:
     int domain;
     int type;
     int protocol;
-    char client_id[STR_SIZE];  // Получаем от сервера, для формирования id арбитров
 public:
-    SOCKET my_sock;
+    char client_id[STR_SIZE];  // Получаем от сервера, для формирования id арбитров
+    SOCKET my_sock,monitoring_sock;
     int arbiter_num; // Просто счетчик, увеличивается при создании арбитра. Имя арбитра: "client_id;arbiter_num"
     _client(char _p_adr[30]);
     bool connectToServer();
+    bool connectToServerSecondSocket(string client_id);
     //bool mainCycle();
     bool readInput();
     char *getCin();
@@ -151,10 +139,63 @@ bool _client::connectToServer()
     if(!error_fl && strcmp(srv_resp,"")!=0)
     {
         strcpy(client_id,srv_resp);
-        cout<<"Connection Established."<<endl;
-        quit=false;
+        // Подключение ко второму сокету
+        if(connectToServerSecondSocket(client_id))
+        {
+            cout<<"Connection Established."<<endl;
+            quit=false;
+        }
     }
     return quit;
+}
+
+bool _client::connectToServerSecondSocket(string client_id)
+{
+    int domain=AF_INET; //адресный домен Internet
+    int type=SOCK_STREAM; //обсепечивает надёжный дуплексный протокол на основе установления логического соединения
+    int protocol=0;//В контексте TCP/IP протокол явно определяется типом сокета, поэтому в кач-ве значения 0
+    char buf[STR_SIZE]; //Строка получения данных
+    char srv_resp[STR_SIZE];//Технические сообщения сервера
+    //Структура для подключения
+    struct sockaddr_in peer;
+    peer.sin_family=domain;
+    peer.sin_port=htons(PORT_MONITORING);    //Номер порта
+    peer.sin_addr.s_addr=inet_addr(p_adr); //IP Адрес сервера
+
+    //для select
+    //+++++
+    bool error_fl=false;
+    WSADATA WsaData;
+    int err = WSAStartup (0x0101, &WsaData);
+    if (err == SOCKET_ERROR)
+    {
+        cout<<"#ERROR with WSAStrartup()";
+        error_fl=true;
+    }
+    monitoring_sock=socket(domain, type, protocol);
+
+    if(monitoring_sock<0)
+    {
+        cout<<"#ERROR with socket MONITORING";
+        error_fl=true;
+    }
+
+    if(connect(monitoring_sock,(struct sockaddr *)&peer,sizeof(peer))<0) //Подключение не прошло
+    {
+        cout<<"#ERROR with connect to MONITORING";
+        error_fl=true;
+    }
+    //Отправляем на сервер nick
+    send(monitoring_sock,client_id.c_str(),STR_SIZE,0);
+    //Получаем от сервера сообщение о подтверждении подключения
+    recv(monitoring_sock,srv_resp,STR_SIZE,0);
+    bool good=false;
+    if(!error_fl && strcmp(srv_resp,"done")==0)
+    {
+        //cout<<"Connection Established."<<endl;
+        good=true;
+    }
+    return good;
 }
 
 bool _client::readInput()
@@ -241,7 +282,7 @@ void recv_file(SOCKET my_sock,int worker_id)
 }
 
 
-void readSocket(void *sock)
+void readSocket(void *client)
 {
     char *part_str;
     char buf[STR_SIZE]; //Строка получения данных
@@ -250,13 +291,43 @@ void readSocket(void *sock)
      tv.tv_usec = 0;
     fd_set readfds;
     bool quit=false;
-    SOCKET my_sock=(SOCKET)sock;
+    _client *my_client=(_client*) client;
+    SOCKET my_sock=my_client->my_sock;
+    SOCKET monitoringSock=my_client->monitoring_sock;
     dispatcher_answer answer;
     //Выполняем комманду select
     //Ф-я проверяет статус сокета my_sock.
     //Последний параметр 0 - ф-я select не замораживает
     //Работу программы, а просто один раз читает состояние сокета
-    while(1)
+    Sleep(1);
+    bool fl=false;
+    while(!fl)
+    {
+       //Очищаем readfds
+       FD_ZERO(&readfds);
+       //Заносим дескриптор сокета в readfds
+       FD_SET(monitoringSock,&readfds);
+       //Последний параметр - время ожидания. Выставляем нули чтобы
+       //Select не блокировал выполнение программы до смены состояния сокета
+       select(NULL,&readfds,NULL,NULL,&tv);
+       //Если пришли данные на чтение то читаем
+       int bytes_recv;
+       char tmp[STR_SIZE];
+       if(FD_ISSET(monitoringSock,&readfds))
+       {
+            //Проверяем не отключился ли сервер
+            char *pBuff = new char[STR_SIZE];
+            if((bytes_recv=recv(monitoringSock,pBuff,STR_SIZE,0)) &&(bytes_recv!=SOCKET_ERROR))
+            {
+                strcpy(tmp,pBuff);
+                strcat(tmp,my_client->client_id);
+                send(monitoringSock,tmp,STR_SIZE,0);
+                fl=true;
+            }
+       }
+    }
+
+/*    while(1)
     {
         bool fl=false;
         Sleep(1);
@@ -320,7 +391,7 @@ void readSocket(void *sock)
            else
                fl=true;
         }
-    }
+    }*/
 }
 
 char *_client::getCin()
@@ -666,7 +737,7 @@ int main(int argc, char *argv[])
     bool quit=client->connectToServer();
 
     int ThreadID;
-    _beginthread(readSocket,0,(void *)client->my_sock); // Поток на чтение
+    _beginthread(readSocket,0,(void *)client); // Поток на чтение
 
     //init_lua();
     while(!quit)
