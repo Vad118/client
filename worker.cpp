@@ -75,11 +75,14 @@ struct receiveStruct
     // 2 - become
     int command;
     char text[STR_SIZE];
+    char arbiter_id[STR_SIZE];
 };
 
 ///////////////////////
 
 int currentState=0; // соответствует sendStruct и добавляется -1 - остановка, процессы не обрабатываются
+bool self_setted=false;
+
 
 map <string,actor> actors;
 char scriptFileName[STR_SIZE];
@@ -342,13 +345,14 @@ void readCommands(void *client)
     }
 }
 
-void sendMonitoring(int type,char text[STR_SIZE]) //Отсылка сообщения для мониторинга
+void sendMonitoring(int type,char text[STR_SIZE], char arbiter_id[STR_SIZE]) //Отсылка сообщения для мониторинга
 {
     if(currentState>=1)
     {
         receiveStruct send_struct;
         send_struct.command=type;
         strcpy(send_struct.text,text);
+        strcpy(send_struct.arbiter_id,arbiter_id);
         char *pBuff = new char[sizeof(receiveStruct)];
         memcpy(pBuff,&send_struct,sizeof(receiveStruct));
         send(client->monitoring_sock,pBuff, sizeof(receiveStruct), 0);
@@ -410,6 +414,7 @@ void readSocket(void *client)
                             // Сохраняем index актера в глобальную переменную self
                             lua_pushstring(actors[answer.arbiter_id].luaVM, answer.arbiter_id);
                             lua_setglobal(actors[answer.arbiter_id].luaVM, "self");
+                            self_setted=true;
                             break;
                         case 2: // Send
                             send_actor_obr(answer);
@@ -517,9 +522,27 @@ int create_actor(lua_State *luaVM)
 
     char arbiterId[STR_SIZE];
     strcpy(arbiterId,client->generateArbiterId());
-    sendAnswer(1,arbiterId,act);
 
-    sendMonitoring(0,"create_test");
+    char arbiter_self[STR_SIZE];
+    lua_getglobal(luaVM,"self");
+    int ind=lua_gettop( luaVM );
+    int is_nil=lua_isnil(luaVM, ind);
+    if(is_nil==0)
+    {
+        string index=lua_tostring( luaVM, ind);
+        strcpy(arbiter_self,index.c_str());
+    }
+    else
+    {
+        strcpy(arbiter_self,"-1");
+    }
+
+    char text[STR_SIZE];
+    strcpy(text,"create: ");
+    strcat(text,arbiterId);
+    sendMonitoring(0,text,arbiter_self);
+
+    sendAnswer(1,arbiterId,act);
 
     // Возвращаем в Lua скрипт индекс созданного актера
     lua_pushstring(luaVM, arbiterId);
@@ -556,7 +579,23 @@ int send_actor(lua_State *luaVM)
     act.count=send_count;
     sendAnswer(2,arbiterId,act);
 
-    sendMonitoring(1,"send_test");
+    char arbiter_self[STR_SIZE];
+    lua_getglobal(luaVM,"self");
+    int ind=lua_gettop( luaVM );
+    int is_nil=lua_isnil(luaVM, ind);
+    if(is_nil==0)
+    {
+        string index=lua_tostring( luaVM, ind);
+        strcpy(arbiter_self,index.c_str());
+    }
+    else
+    {
+        strcpy(arbiter_self,"-1");
+    }
+    char text[STR_SIZE];
+    strcpy(text,"send: ");
+    strcat(text,arbiterId);
+    sendMonitoring(1,text,arbiter_self);
 
     return 0;
 }
@@ -717,7 +756,12 @@ int become_actor(lua_State *luaVM)
     }
     actors[index].count=count;
 
-    sendMonitoring(2,"become_test");
+    char arbiter_self[STR_SIZE];
+    strcpy(arbiter_self,index.c_str());
+    char text[STR_SIZE];
+    strcpy(text,"become: ");
+    strcat(text,behavior.c_str());
+    sendMonitoring(2,text,arbiter_self);
 
     return 0;
 }
