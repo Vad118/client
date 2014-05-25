@@ -55,7 +55,32 @@ struct dispatcher_answer
     int actor_par_count;
     char script[1024];
 };
+
+// Структура комманды отправляемой клиенту
+struct sendStruct
+{
+    // 0 - обычный режим
+    // 1 - мониторинг
+    // 2 - трассировка
+    // 3 - следующий шаг
+    // 4 - сохранение
+    int command;
+};
+
+// Структура получаемая от клиента при мониторинге/трассировке
+struct receiveStruct
+{
+    // 0 - create
+    // 1 - send
+    // 2 - become
+    int command;
+    char text[STR_SIZE];
+};
+
 ///////////////////////
+
+int currentState=0; // соответствует sendStruct и добавляется -1 - остановка, процессы не обрабатываются
+
 map <string,actor> actors;
 char scriptFileName[STR_SIZE];
 lua_State *g_LuaVM = NULL; //Глобальная, фактически это CreateAndInitActors, у всех остальных актеров свои переменные интерпритатора
@@ -282,6 +307,54 @@ void recv_file(SOCKET my_sock,int worker_id)
 }
 
 
+void readCommands(void *client)
+{
+    struct timeval tv;
+     tv.tv_sec = 0;
+     tv.tv_usec = 0;
+    fd_set readfds;
+    _client *my_client=(_client*) client;
+    SOCKET monitoringSock=my_client->monitoring_sock;
+    while(1)
+    {
+          //Очищаем readfds
+          FD_ZERO(&readfds);
+          //Заносим дескриптор сокета в readfds
+          FD_SET(monitoringSock,&readfds);
+          //Последний параметр - время ожидания. Выставляем нули чтобы
+          //Select не блокировал выполнение программы до смены состояния сокета
+          select(NULL,&readfds,NULL,NULL,&tv);
+          //Если пришли данные на чтение то читаем
+          int bytes_recv;
+          char tmp[STR_SIZE];
+          if(FD_ISSET(monitoringSock,&readfds))
+          {
+               //Проверяем не отключился ли сервер
+               char *pBuff = new char[STR_SIZE];
+               if((bytes_recv=recv(monitoringSock,pBuff,sizeof( sendStruct),0)) &&(bytes_recv!=SOCKET_ERROR))
+               {
+                   sendStruct receivedCommand;
+                   memcpy( &receivedCommand, pBuff, sizeof( sendStruct));
+                   currentState=receivedCommand.command;
+               }
+               delete[] pBuff;
+          }
+    }
+}
+
+void sendMonitoring(int type,char text[STR_SIZE]) //Отсылка сообщения для мониторинга
+{
+    if(currentState>=1)
+    {
+        receiveStruct send_struct;
+        send_struct.command=type;
+        strcpy(send_struct.text,text);
+        char *pBuff = new char[sizeof(receiveStruct)];
+        memcpy(pBuff,&send_struct,sizeof(receiveStruct));
+        send(client->monitoring_sock,pBuff, sizeof(receiveStruct), 0);
+    }
+}
+
 void readSocket(void *client)
 {
     char *part_str;
@@ -301,35 +374,10 @@ void readSocket(void *client)
     //Работу программы, а просто один раз читает состояние сокета
     Sleep(1);
     bool fl=false;
-    while(!fl)
-    {
-       //Очищаем readfds
-       FD_ZERO(&readfds);
-       //Заносим дескриптор сокета в readfds
-       FD_SET(monitoringSock,&readfds);
-       //Последний параметр - время ожидания. Выставляем нули чтобы
-       //Select не блокировал выполнение программы до смены состояния сокета
-       select(NULL,&readfds,NULL,NULL,&tv);
-       //Если пришли данные на чтение то читаем
-       int bytes_recv;
-       char tmp[STR_SIZE];
-       if(FD_ISSET(monitoringSock,&readfds))
-       {
-            //Проверяем не отключился ли сервер
-            char *pBuff = new char[STR_SIZE];
-            if((bytes_recv=recv(monitoringSock,pBuff,STR_SIZE,0)) &&(bytes_recv!=SOCKET_ERROR))
-            {
-                strcpy(tmp,pBuff);
-                strcat(tmp,my_client->client_id);
-                send(monitoringSock,tmp,STR_SIZE,0);
-                fl=true;
-            }
-       }
-    }
 
-/*    while(1)
+    while(1)
     {
-        bool fl=false;
+        fl=false;
         Sleep(1);
         //Очищаем readfds
         FD_ZERO(&readfds);
@@ -391,7 +439,7 @@ void readSocket(void *client)
            else
                fl=true;
         }
-    }*/
+    }
 }
 
 char *_client::getCin()
@@ -471,6 +519,8 @@ int create_actor(lua_State *luaVM)
     strcpy(arbiterId,client->generateArbiterId());
     sendAnswer(1,arbiterId,act);
 
+    sendMonitoring(0,"create_test");
+
     // Возвращаем в Lua скрипт индекс созданного актера
     lua_pushstring(luaVM, arbiterId);
     return 1;
@@ -505,6 +555,9 @@ int send_actor(lua_State *luaVM)
     act.behavior="";
     act.count=send_count;
     sendAnswer(2,arbiterId,act);
+
+    sendMonitoring(1,"send_test");
+
     return 0;
 }
 
@@ -663,6 +716,9 @@ int become_actor(lua_State *luaVM)
         count++;
     }
     actors[index].count=count;
+
+    sendMonitoring(2,"become_test");
+
     return 0;
 }
 
@@ -710,11 +766,23 @@ bool init_lua(char *scriptFileName, lua_State *&loc_luaVM)
     return true;
 }
 
+static int lua_sleep(lua_State *L)
+{
+    int m = static_cast<int> (luaL_checknumber(L,1));
+    Sleep(m * 1000);
+    // usleep takes microseconds. This converts the parameter to milliseconds.
+    // Change this as necessary.
+    // Alternatively, use 'sleep()' to treat the parameter as whole seconds.
+    return 0;
+}
+
 void start_lua(char *func_name)
 {
     //Вызываем main функцию lua скрипта
     // Переместить на начало стека функцию onFileFound
     lua_getglobal(g_LuaVM, func_name);
+    lua_pushcfunction(g_LuaVM, lua_sleep);
+    lua_setglobal(g_LuaVM, "sleep");
     // Поместить следующим элементом в стек путь к найденному файлу (fileName в скрипте)
     //lua_pushstring(g_LuaVM, strFilePath.c_str());
 
@@ -738,6 +806,7 @@ int main(int argc, char *argv[])
 
     int ThreadID;
     _beginthread(readSocket,0,(void *)client); // Поток на чтение
+    _beginthread(readCommands,0,(void *)client);
 
     //init_lua();
     while(!quit)
