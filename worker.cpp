@@ -36,6 +36,7 @@ struct saveActor
      char id[STR_SIZE];
 
      int totalSaveCount;
+     int totalUnreadMessages;
 };
 
 struct dispatcher_answer
@@ -504,17 +505,90 @@ void serializeActorsForSave(saveActor *saveActorsArray)
     }
 }
 
-void sendSaveStruct(saveActor *saveActorsArray, int totalSaveCount)
+void sendSaveStruct(saveActor *saveActorsArray, int totalSaveCount, int count_unread_messages)
 {
+    // Отсылаем актеров
     for(int i=0;i<totalSaveCount;i++)
     {
         saveActorsArray[i].totalSaveCount=totalSaveCount;
+        saveActorsArray[i].totalUnreadMessages=count_unread_messages;
         char *pBuff = new char[sizeof(saveActor)];
         memcpy(pBuff,&saveActorsArray[i],sizeof(saveActor));
         send(client->monitoring_sock,pBuff, sizeof(saveActor), 0);
         delete[] pBuff;
     }
+
 }
+
+dispatcher_answer receiveMessageUnread()
+{
+    dispatcher_answer *asnwer;
+    fd_set readfds;
+    struct timeval tv;
+    tv.tv_sec = 0;
+    tv.tv_usec = 0;
+    SOCKET clientSocket=client->my_sock;
+    //Очищаем readfds
+    FD_ZERO(&readfds);
+    //Заносим дескриптор сокета в readfds
+    FD_SET(clientSocket,&readfds);
+    //Последний параметр - время ожидания. Выставляем нули чтобы
+    //Select не блокировал выполнение программы до смены состояния сокета
+    select(NULL,&readfds,NULL,NULL,&tv);
+    //Если пришли данные на чтение то читаем
+    dispatcher_answer answer;
+    if(FD_ISSET(clientSocket,&readfds))
+    {
+        int bytes_recv;
+        //Если клиент не отключился и мы получили сообщение
+        char *pBuff = new char[sizeof(dispatcher_answer)];
+        if((bytes_recv=recv(clientSocket,pBuff,sizeof(dispatcher_answer),0)) &&(bytes_recv!=SOCKET_ERROR))
+        {
+            memcpy( &answer, pBuff, sizeof( dispatcher_answer));
+        }
+        else //Клиент отключился
+        {
+            answer.command=-1;
+        }
+        delete[] pBuff;
+    }
+    else
+        answer.command=-1;
+
+    return answer;
+}
+
+void getUnreadMessages(dipatcher_answer *unreadMessages, int &count_unread_messages)
+{
+    // Считываем все что есть на сокетах по всем клиентам - для сохранения. После Load все эти пакеты будут перезапущены.
+    // На случай не дошедших пакетов - минимум 10 считываний после последнего пришедшего.
+    dispatcher_answer received_answer;
+    int count_read=0;
+    while(count_read<=10)
+    {
+        received_answer=receiveMessageUnread(i);
+        if(received_answer.command!=-1)
+        {
+            count_read=0;
+            unreadMessages[count_unread_messages]=received_answer;
+            count_unread_messages++;
+        }
+        count_read++;
+    }
+}
+
+void sendUnreadMessages(dipatcher_answer *unreadMessages, int count_unread_messages)
+{
+    // Отсылаем непрочитанные сообщения
+    for(int i=0;i<count_unread_messages;i++)
+    {
+        char *pBuff = new char[sizeof(dipatcher_answer)];
+        memcpy(pBuff,&unreadMessages[i],sizeof(dipatcher_answer));
+        send(client->monitoring_sock,pBuff, sizeof(dipatcher_answer), 0);
+        delete[] pBuff;
+    }
+}
+
 
 void stopWaitForContinue() // Функция останавливающая выполнение программы и ожидающая команды.
 {
@@ -525,9 +599,17 @@ void stopWaitForContinue() // Функция останавливающая вы
     if(currentState==4)
     {
         currentState=previousState;
+
+        int count_unread_messages=0;
+        getUnreadMessages(unreadMessages,count_unread_messages);
+
         saveActor *saveActorsArray=new saveActor[actors.size()];
         serializeActorsForSave(saveActorsArray);
-        sendSaveStruct(saveActorsArray,actors.size());
+        sendSaveStruct(saveActorsArray,actors.size(),count_unread_messages);
+
+        dispatcher_answer unreadMessages[ARBITERS_MAX];
+        sendUnreadMessages(unreadMessages,count_unread_messages);
+
         currentState=previousState;
     }
     if(currentState==3)  // Если команда на следующий шаг, то опять меняем состояние, во всех остальных случаях продолжаем работу
