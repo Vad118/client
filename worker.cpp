@@ -5,6 +5,7 @@
 #include <string>
 #include <fstream>
 #include <map>
+#include <iterator>
 #include <cctype>
 extern "C"
 {
@@ -27,6 +28,16 @@ struct actor
     int count;
 };
 
+struct saveActor
+{
+     char behavior[STR_SIZE];
+     char parameters[5][50];
+     int count;
+     char id[STR_SIZE];
+
+     int totalSaveCount;
+};
+
 struct dispatcher_answer
 {
     int command;   //Команда, интерпретируется на стороне клиента.
@@ -38,6 +49,7 @@ struct dispatcher_answer
     // 61- идет процесс пересылки скрипта
     // 62- процесс пересылки завершен
     // 7 - Запуск скрипта(одному работнику)
+    // 8 - Запуск вычислений после загрузки
     int worker_id; //кому отправляем
     char arbiter_id[STR_SIZE]; //Арбитр, которому отправляем
     //actor actor_create_msg; //Параметры для передачи в create\become
@@ -61,18 +73,20 @@ struct sendStruct
 {
     // 0 - обычный режим
     // 1 - мониторинг
-    // 2 - трассировка
+    // 2 - стоп
     // 3 - следующий шаг
     // 4 - сохранение
     int command;
 };
 
-// Структура получаемая от клиента при мониторинге/трассировке
+// Структура получаемая от клиента при мониторинге/трассировке/сохранении
 struct receiveStruct
 {
     // 0 - create
     // 1 - send
     // 2 - become
+    // 31 - save_start_send
+    // 32 - save_end_send
     int command;
     char text[STR_SIZE];
     char arbiter_id[STR_SIZE];
@@ -81,6 +95,7 @@ struct receiveStruct
 ///////////////////////
 
 int currentState=0; // соответствует sendStruct и добавляется -1 - остановка, процессы не обрабатываются
+int previousState=0;
 bool self_setted=false;
 
 
@@ -338,6 +353,7 @@ void readCommands(void *client)
                {
                    sendStruct receivedCommand;
                    memcpy( &receivedCommand, pBuff, sizeof( sendStruct));
+                   previousState=currentState;
                    currentState=receivedCommand.command;
                }
                delete[] pBuff;
@@ -356,6 +372,7 @@ void sendMonitoring(int type,char text[STR_SIZE], char arbiter_id[STR_SIZE]) //�
         char *pBuff = new char[sizeof(receiveStruct)];
         memcpy(pBuff,&send_struct,sizeof(receiveStruct));
         send(client->monitoring_sock,pBuff, sizeof(receiveStruct), 0);
+        delete[] pBuff;
     }
 }
 
@@ -471,6 +488,52 @@ char *_client::generateArbiterId()
 }
 //////////////////////////////
 
+void serializeActorsForSave(saveActor *saveActorsArray)
+{
+    int i=0;
+    for(std::map <string,actor> ::iterator it = actors.begin(); it != actors.end(); ++it)
+    {
+        strcpy(saveActorsArray[i].behavior,(*it).second.behavior.c_str());
+        for(int j=0;j<5;j++)
+        {
+            strcpy(saveActorsArray[i].parameters[j],(*it).second.parameters[j]);
+        }
+        saveActorsArray[i].count=(*it).second.count;
+        strcpy(saveActorsArray[i].id,(*it).first.c_str());
+        i++;
+    }
+}
+
+void sendSaveStruct(saveActor *saveActorsArray, int totalSaveCount)
+{
+    for(int i=0;i<totalSaveCount;i++)
+    {
+        saveActorsArray[i].totalSaveCount=totalSaveCount;
+        char *pBuff = new char[sizeof(saveActor)];
+        memcpy(pBuff,&saveActorsArray[i],sizeof(saveActor));
+        send(client->monitoring_sock,pBuff, sizeof(saveActor), 0);
+        delete[] pBuff;
+    }
+}
+
+void stopWaitForContinue() // Функция останавливающая выполнение программы и ожидающая команды.
+{
+    while(currentState==2)
+    {
+        // Просто висит цикл, если выслан стоп.
+    }
+    if(currentState==4)
+    {
+        currentState=previousState;
+        saveActor *saveActorsArray=new saveActor[actors.size()];
+        serializeActorsForSave(saveActorsArray);
+        sendSaveStruct(saveActorsArray,actors.size());
+        currentState=previousState;
+    }
+    if(currentState==3)  // Если команда на следующий шаг, то опять меняем состояние, во всех остальных случаях продолжаем работу
+        currentState=2;
+}
+
 //++++Actor+++
 //++++++++++++
 
@@ -540,12 +603,16 @@ int create_actor(lua_State *luaVM)
     char text[STR_SIZE];
     strcpy(text,"create: ");
     strcat(text,arbiterId);
+
     sendMonitoring(0,text,arbiter_self);
+    stopWaitForContinue();
 
     sendAnswer(1,arbiterId,act);
 
     // Возвращаем в Lua скрипт индекс созданного актера
     lua_pushstring(luaVM, arbiterId);
+
+
     return 1;
 }
 int send_actor(lua_State *luaVM)
@@ -577,7 +644,6 @@ int send_actor(lua_State *luaVM)
     }
     act.behavior="";
     act.count=send_count;
-    sendAnswer(2,arbiterId,act);
 
     char arbiter_self[STR_SIZE];
     lua_getglobal(luaVM,"self");
@@ -596,6 +662,10 @@ int send_actor(lua_State *luaVM)
     strcpy(text,"send: ");
     strcat(text,arbiterId);
     sendMonitoring(1,text,arbiter_self);
+
+    stopWaitForContinue();
+
+    sendAnswer(2,arbiterId,act);
 
     return 0;
 }
@@ -762,6 +832,8 @@ int become_actor(lua_State *luaVM)
     strcpy(text,"become: ");
     strcat(text,behavior.c_str());
     sendMonitoring(2,text,arbiter_self);
+
+    stopWaitForContinue();
 
     return 0;
 }
