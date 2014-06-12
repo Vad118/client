@@ -113,6 +113,7 @@ bool LoadScript(char *script);
 void _lua_pushStringOrNumber(lua_State *g_LuaVM, const char *str);
 void get_actor_func_name(char &func_name, bool &spec_func_name, lua_State *luaVM, const char *str, char send_parameters[5][50]);
 
+void stopWaitForContinue(); // Функция останавливающая выполнение программы и ожидающая команды.
 ///////////////////////
 class _client
 {
@@ -421,6 +422,7 @@ void readSocket(void *client)
                 {
                     memcpy(&answer,pBuff,sizeof(dispatcher_answer));
                     //cout<<answer.actor_behavior<<endl;
+                    char text[STR_SIZE];
                     switch(answer.command)
                     {
                         case 1: // Create
@@ -433,9 +435,22 @@ void readSocket(void *client)
                             lua_pushstring(actors[answer.arbiter_id].luaVM, answer.arbiter_id);
                             lua_setglobal(actors[answer.arbiter_id].luaVM, "self");
                             self_setted=true;
+
+
+                            /*strcpy(text,"create: ");
+                            strcat(text,answer.arbiter_id);
+                            sendMonitoring(0,text,(char *)actors[answer.arbiter_id].luaVM);
+                            stopWaitForContinue();*/
+
                             break;
                         case 2: // Send
                             send_actor_obr(answer);
+
+                            /*strcpy(text,"send: ");
+                            strcat(text,answer.arbiter_id);
+                            sendMonitoring(1,text,(char *)actors[answer.arbiter_id].luaVM);
+                            stopWaitForContinue();*/
+
                             break;
                         case 3: // become
                             actors[answer.arbiter_id].behavior=answer.actor_behavior;
