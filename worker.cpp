@@ -558,7 +558,7 @@ dispatcher_answer receiveMessageUnread()
     return answer;
 }
 
-void getUnreadMessages(dipatcher_answer *unreadMessages, int &count_unread_messages)
+void getUnreadMessages(dispatcher_answer *unreadMessages, int &count_unread_messages)
 {
     // Считываем все что есть на сокетах по всем клиентам - для сохранения. После Load все эти пакеты будут перезапущены.
     // На случай не дошедших пакетов - минимум 10 считываний после последнего пришедшего.
@@ -566,7 +566,7 @@ void getUnreadMessages(dipatcher_answer *unreadMessages, int &count_unread_messa
     int count_read=0;
     while(count_read<=10)
     {
-        received_answer=receiveMessageUnread(i);
+        received_answer=receiveMessageUnread();
         if(received_answer.command!=-1)
         {
             count_read=0;
@@ -577,14 +577,14 @@ void getUnreadMessages(dipatcher_answer *unreadMessages, int &count_unread_messa
     }
 }
 
-void sendUnreadMessages(dipatcher_answer *unreadMessages, int count_unread_messages)
+void sendUnreadMessages(dispatcher_answer *unreadMessages, int count_unread_messages)
 {
     // Отсылаем непрочитанные сообщения
     for(int i=0;i<count_unread_messages;i++)
     {
-        char *pBuff = new char[sizeof(dipatcher_answer)];
-        memcpy(pBuff,&unreadMessages[i],sizeof(dipatcher_answer));
-        send(client->monitoring_sock,pBuff, sizeof(dipatcher_answer), 0);
+        char *pBuff = new char[sizeof(dispatcher_answer)];
+        memcpy(pBuff,&unreadMessages[i],sizeof(dispatcher_answer));
+        send(client->monitoring_sock,pBuff, sizeof(dispatcher_answer), 0);
         delete[] pBuff;
     }
 }
@@ -601,13 +601,14 @@ void stopWaitForContinue() // Функция останавливающая вы
         currentState=previousState;
 
         int count_unread_messages=0;
+        dispatcher_answer unreadMessages[ARBITERS_MAX];
+
         getUnreadMessages(unreadMessages,count_unread_messages);
 
         saveActor *saveActorsArray=new saveActor[actors.size()];
         serializeActorsForSave(saveActorsArray);
         sendSaveStruct(saveActorsArray,actors.size(),count_unread_messages);
 
-        dispatcher_answer unreadMessages[ARBITERS_MAX];
         sendUnreadMessages(unreadMessages,count_unread_messages);
 
         currentState=previousState;
