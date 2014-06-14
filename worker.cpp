@@ -51,6 +51,7 @@ struct dispatcher_answer
     // 62- процесс пересылки завершен
     // 7 - Запуск скрипта(одному работнику)
     // 8 - Запуск вычислений после загрузки
+    // 9 - сохранение
     int worker_id; //кому отправляем
     char arbiter_id[STR_SIZE]; //Арбитр, которому отправляем
     //actor actor_create_msg; //Параметры для передачи в create\become
@@ -114,6 +115,7 @@ void _lua_pushStringOrNumber(lua_State *g_LuaVM, const char *str);
 void get_actor_func_name(char &func_name, bool &spec_func_name, lua_State *luaVM, const char *str, char send_parameters[5][50]);
 
 void stopWaitForContinue(); // Функция останавливающая выполнение программы и ожидающая команды.
+void save();
 ///////////////////////
 class _client
 {
@@ -408,6 +410,10 @@ void readSocket(void *client)
         FD_SET(my_sock,&readfds);
         while(!fl)
         {
+            stopWaitForContinue();
+            if(currentState==4)
+                save();
+
            //Последний параметр - время ожидания. Выставляем нули чтобы
            //Select не блокировал выполнение программы до смены состояния сокета
            select(NULL,&readfds,NULL,NULL,&tv);
@@ -437,19 +443,18 @@ void readSocket(void *client)
                             self_setted=true;
 
 
-                            /*strcpy(text,"create: ");
+                            strcpy(text,"create: ");
                             strcat(text,answer.arbiter_id);
-                            sendMonitoring(0,text,(char *)actors[answer.arbiter_id].luaVM);
-                            stopWaitForContinue();*/
+                            sendMonitoring(0,text,answer.arbiter_id);
+
 
                             break;
                         case 2: // Send
                             send_actor_obr(answer);
 
-                            /*strcpy(text,"send: ");
+                            strcpy(text,"send: ");
                             strcat(text,answer.arbiter_id);
-                            sendMonitoring(1,text,(char *)actors[answer.arbiter_id].luaVM);
-                            stopWaitForContinue();*/
+                            sendMonitoring(1,text,answer.arbiter_id);
 
                             break;
                         case 3: // become
@@ -532,7 +537,15 @@ void sendSaveStruct(saveActor *saveActorsArray, int totalSaveCount, int count_un
         send(client->monitoring_sock,pBuff, sizeof(saveActor), 0);
         delete[] pBuff;
     }
-
+    if(totalSaveCount==0) // Если не создано ни одного актера на клиенте - нужно чтобы структура все-равно отправилась
+    {
+        saveActorsArray[0].totalSaveCount=totalSaveCount;
+        saveActorsArray[0].totalUnreadMessages=count_unread_messages;
+        char *pBuff = new char[sizeof(saveActor)];
+        memcpy(pBuff,&saveActorsArray[0],sizeof(saveActor));
+        send(client->monitoring_sock,pBuff, sizeof(saveActor), 0);
+        delete[] pBuff;
+    }
 }
 
 dispatcher_answer receiveMessageUnread()
@@ -611,25 +624,41 @@ void stopWaitForContinue() // Функция останавливающая вы
     {
         // Просто висит цикл, если выслан стоп.
     }
-    if(currentState==4)
-    {
-        currentState=previousState;
-
-        int count_unread_messages=0;
-        dispatcher_answer unreadMessages[ARBITERS_MAX];
-
-        getUnreadMessages(unreadMessages,count_unread_messages);
-
-        saveActor *saveActorsArray=new saveActor[actors.size()];
-        serializeActorsForSave(saveActorsArray);
-        sendSaveStruct(saveActorsArray,actors.size(),count_unread_messages);
-
-        sendUnreadMessages(unreadMessages,count_unread_messages);
-
-        currentState=previousState;
-    }
     if(currentState==3)  // Если команда на следующий шаг, то опять меняем состояние, во всех остальных случаях продолжаем работу
         currentState=2;
+}
+
+void sendSaveCommand()
+{
+    //Создаем структуру для отправки
+    dispatcher_answer answer;
+    answer.command=9;
+    strcpy(answer.arbiter_id,"");
+    strcpy(answer.actor_behavior,"");
+    answer.actor_par_count=0;
+
+    char *pBuff = new char[sizeof(dispatcher_answer)];
+    memcpy( pBuff, &answer, sizeof(dispatcher_answer));
+    send( client->my_sock, pBuff, sizeof(dispatcher_answer), 0 );
+    delete[] pBuff;
+}
+
+void save()
+{
+    int count_unread_messages=0;
+    dispatcher_answer unreadMessages[ARBITERS_MAX];
+
+    getUnreadMessages(unreadMessages,count_unread_messages);
+
+    saveActor *saveActorsArray=new saveActor[actors.size()];
+    serializeActorsForSave(saveActorsArray);
+    sendSaveStruct(saveActorsArray,actors.size(),count_unread_messages);
+
+    sendUnreadMessages(unreadMessages,count_unread_messages);
+
+    sendSaveCommand();
+
+    currentState=previousState;
 }
 
 //++++Actor+++
@@ -684,7 +713,7 @@ int create_actor(lua_State *luaVM)
     char arbiterId[STR_SIZE];
     strcpy(arbiterId,client->generateArbiterId());
 
-    char arbiter_self[STR_SIZE];
+    /*char arbiter_self[STR_SIZE];
     lua_getglobal(luaVM,"self");
     int ind=lua_gettop( luaVM );
     int is_nil=lua_isnil(luaVM, ind);
@@ -702,8 +731,8 @@ int create_actor(lua_State *luaVM)
     strcpy(text,"create: ");
     strcat(text,arbiterId);
 
-    sendMonitoring(0,text,arbiter_self);
-    stopWaitForContinue();
+    sendMonitoring(0,text,arbiter_self);*/
+    //stopWaitForContinue();
 
     sendAnswer(1,arbiterId,act);
 
@@ -743,7 +772,7 @@ int send_actor(lua_State *luaVM)
     act.behavior="";
     act.count=send_count;
 
-    char arbiter_self[STR_SIZE];
+    /*char arbiter_self[STR_SIZE];
     lua_getglobal(luaVM,"self");
     int ind=lua_gettop( luaVM );
     int is_nil=lua_isnil(luaVM, ind);
@@ -759,9 +788,9 @@ int send_actor(lua_State *luaVM)
     char text[STR_SIZE];
     strcpy(text,"send: ");
     strcat(text,arbiterId);
-    sendMonitoring(1,text,arbiter_self);
+    sendMonitoring(1,text,arbiter_self);*/
 
-    stopWaitForContinue();
+    //stopWaitForContinue();
 
     sendAnswer(2,arbiterId,act);
 
@@ -840,7 +869,7 @@ int send_actor_obr(dispatcher_answer answer)
           // Проверить возвращенное значение,
           // если это не 0, сообщить об ошибке
           // lua_tostring(g_LuaVM, -1) содержит описание ошибки
-          cerr << "Error calling function Send1: " << lua_tostring(g_LuaVM, -1) << endl;
+          cerr << "Error calling function Send1: " << lua_tostring(actors[arbiter_id].luaVM, -1) << endl;
         }
     }
     return 0;
@@ -957,6 +986,16 @@ void sendAnswer(int command, char arbiter_id[STR_SIZE], actor act)
     delete[] pBuff;
 }
 
+static int lua_sleep(lua_State *L)
+{
+    int m = static_cast<int> (luaL_checknumber(L,1));
+    Sleep(m*1000);
+    // usleep takes microseconds. This converts the parameter to milliseconds.
+    // Change this as necessary.
+    // Alternatively, use 'sleep()' to treat the parameter as whole seconds.
+    return 0;
+}
+
 bool init_lua(char *scriptFileName, lua_State *&loc_luaVM)
 {
     // Инициализируем экземпляр
@@ -965,6 +1004,7 @@ bool init_lua(char *scriptFileName, lua_State *&loc_luaVM)
     lua_register(loc_luaVM, "create", create_actor);
     lua_register(loc_luaVM, "send", send_actor);
     lua_register(loc_luaVM, "become", become_actor);
+    lua_register(loc_luaVM, "sleep", lua_sleep);
 
     int s = luaL_loadfile(loc_luaVM, scriptFileName);
 
@@ -980,23 +1020,14 @@ bool init_lua(char *scriptFileName, lua_State *&loc_luaVM)
     return true;
 }
 
-static int lua_sleep(lua_State *L)
-{
-    int m = static_cast<int> (luaL_checknumber(L,1));
-    Sleep(m * 1000);
-    // usleep takes microseconds. This converts the parameter to milliseconds.
-    // Change this as necessary.
-    // Alternatively, use 'sleep()' to treat the parameter as whole seconds.
-    return 0;
-}
 
 void start_lua(char *func_name)
 {
     //Вызываем main функцию lua скрипта
     // Переместить на начало стека функцию onFileFound
     lua_getglobal(g_LuaVM, func_name);
-    lua_pushcfunction(g_LuaVM, lua_sleep);
-    lua_setglobal(g_LuaVM, "sleep");
+    //lua_pushcfunction(g_LuaVM, lua_sleep);
+    //lua_setglobal(g_LuaVM, "sleep");
     // Поместить следующим элементом в стек путь к найденному файлу (fileName в скрипте)
     //lua_pushstring(g_LuaVM, strFilePath.c_str());
 
