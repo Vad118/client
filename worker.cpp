@@ -52,6 +52,7 @@ struct dispatcher_answer
     // 7 - Запуск скрипта(одному работнику)
     // 8 - Запуск вычислений после загрузки
     // 9 - сохранение
+    // 10 - Сервер отключился
     int worker_id; //кому отправляем
     char arbiter_id[STR_SIZE]; //Арбитр, которому отправляем
     //actor actor_create_msg; //Параметры для передачи в create\become
@@ -99,6 +100,7 @@ struct receiveStruct
 int currentState=0; // соответствует sendStruct и добавляется -1 - остановка, процессы не обрабатываются
 int previousState=0;
 bool self_setted=false;
+bool gloabl_quit=false;
 
 
 map <string,actor> actors;
@@ -337,7 +339,7 @@ void readCommands(void *client)
     fd_set readfds;
     _client *my_client=(_client*) client;
     SOCKET monitoringSock=my_client->monitoring_sock;
-    while(1)
+    while(!gloabl_quit)
     {
           //Очищаем readfds
           FD_ZERO(&readfds);
@@ -363,6 +365,8 @@ void readCommands(void *client)
                delete[] pBuff;
           }
     }
+    closesocket(monitoringSock);
+    delete my_client;
 }
 
 void sendMonitoring(int type,char text[STR_SIZE], char arbiter_id[STR_SIZE]) //Отсылка сообщения для мониторинга
@@ -400,7 +404,7 @@ void readSocket(void *client)
     Sleep(1);
     bool fl=false;
 
-    while(1)
+    while(!quit)
     {
         fl=false;
         Sleep(1);
@@ -475,12 +479,13 @@ void readSocket(void *client)
                         case 7: //Инициализация скрипта(старт вычислений)
                             start_lua("createAndInitActors"); //Всегда начинаем с функции creatAndInitActors
                             break;
+                        case 10:
+                            quit=true;
+                            gloabl_quit=true;
+                            fl=true;
+                            break;
+
                     }
-                }
-                else
-                {
-                     quit=true;
-                     break;
                 }
                 delete[] pBuff;
            }
@@ -488,6 +493,9 @@ void readSocket(void *client)
                fl=true;
         }
     }
+    closesocket(my_client->my_sock);
+    delete my_client;
+
 }
 
 char *_client::getCin()
@@ -1060,18 +1068,23 @@ int main(int argc, char *argv[])
 
     bool quit=client->connectToServer();
 
-    int ThreadID;
-    _beginthread(readSocket,0,(void *)client); // Поток на чтение
+    //_beginthread(readSocket,0,(void *)client); // Поток на чтение
     _beginthread(readCommands,0,(void *)client);
+    readSocket((void *)client);
+
 
     //init_lua();
-    while(!quit)
+    /*while(!gloabl_quit)
     {
-        quit=client->readInput(); //Чтение с клавиатуры
-        Sleep(1);
+        //quit=client->readInput(); //Чтение с клавиатуры
+        //Sleep(1);
+    }*/
+    if(g_LuaVM!=NULL)
+    {
+        lua_close(g_LuaVM);
+        remove(scriptFileName);
     }
-    lua_close(g_LuaVM);
-    remove(scriptFileName);
-    return 0;
+    delete client;
+    return 1;
 }
 //--------------------------------------------------------
