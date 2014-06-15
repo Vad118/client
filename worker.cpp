@@ -55,18 +55,11 @@ struct dispatcher_answer
     // 10 - Сервер отключился
     int worker_id; //кому отправляем
     char arbiter_id[STR_SIZE]; //Арбитр, которому отправляем
-    //actor actor_create_msg; //Параметры для передачи в create\become
+    char arbiter_parent[10]; // Арбитр, который отправляет
 
     //Параметры actor
     char actor_behavior[STR_SIZE];
     char actor_parameters[5][50]; //Параметр для передачи в send
-    /*char actor_behavior[STR_SIZE];
-    char actor_addressat[STR_SIZE];
-    int  actor_val;
-    bool actor_isValSet;
-    int  actor_parameter; //Параметр для передачи в send*/
-    /*string actor_behavior;
-    string actor_parameters[100];*/
     int actor_par_count;
     char script[1024];
 };
@@ -93,6 +86,7 @@ struct receiveStruct
     int command;
     char text[STR_SIZE];
     char arbiter_id[STR_SIZE];
+    char arbiter_parent[10];
 };
 
 ///////////////////////
@@ -100,7 +94,7 @@ struct receiveStruct
 int currentState=0; // соответствует sendStruct и добавляется -1 - остановка, процессы не обрабатываются
 int previousState=0;
 bool self_setted=false;
-bool gloabl_quit=false;
+bool global_quit=false;
 
 
 map <string,actor> actors;
@@ -109,7 +103,7 @@ lua_State *g_LuaVM = NULL; //Глобальная, фактически это C
 
 
 int send_actor_obr(dispatcher_answer answer);
-void sendAnswer(int command, char arbiter_id[STR_SIZE], actor act);
+void sendAnswer(int command, char arbiter_id[STR_SIZE], actor act, char arbiter_parent[STR_SIZE]);
 bool init_lua(char *scriptFileName, lua_State *&loc_luaVM);
 void start_lua(char *func_name);
 bool LoadScript(char *script);
@@ -339,7 +333,7 @@ void readCommands(void *client)
     fd_set readfds;
     _client *my_client=(_client*) client;
     SOCKET monitoringSock=my_client->monitoring_sock;
-    while(!gloabl_quit)
+    while(!global_quit)
     {
           //Очищаем readfds
           FD_ZERO(&readfds);
@@ -369,7 +363,7 @@ void readCommands(void *client)
     delete my_client;
 }
 
-void sendMonitoring(int type,char text[STR_SIZE], char arbiter_id[STR_SIZE]) //Отсылка сообщения для мониторинга
+void sendMonitoring(int type,char text[STR_SIZE], char arbiter_id[STR_SIZE], char arbiter_parent[STR_SIZE]) //Отсылка сообщения для мониторинга
 {
     if(currentState>=1)
     {
@@ -377,6 +371,7 @@ void sendMonitoring(int type,char text[STR_SIZE], char arbiter_id[STR_SIZE]) //�
         send_struct.command=type;
         strcpy(send_struct.text,text);
         strcpy(send_struct.arbiter_id,arbiter_id);
+        strcpy(send_struct.arbiter_parent,arbiter_parent);
         char *pBuff = new char[sizeof(receiveStruct)];
         memcpy(pBuff,&send_struct,sizeof(receiveStruct));
         send(client->monitoring_sock,pBuff, sizeof(receiveStruct), 0);
@@ -454,7 +449,7 @@ void readSocket(void *client)
 
                             strcpy(text,"create: ");
                             strcat(text,answer.arbiter_id);
-                            sendMonitoring(0,text,answer.arbiter_id);
+                            sendMonitoring(0,text,answer.arbiter_id,answer.arbiter_parent);
 
 
                             break;
@@ -463,8 +458,12 @@ void readSocket(void *client)
 
                             strcpy(text,"send: ");
                             strcat(text,answer.arbiter_id);
-                            sendMonitoring(1,text,answer.arbiter_id);
-
+                            for(int i=0;i<answer.actor_par_count;i++)
+                            {
+                                strcat(text," ");
+                                strcat(text,answer.actor_parameters[i]);
+                            }
+                            sendMonitoring(1,text,answer.arbiter_id,answer.arbiter_parent);
                             break;
                         case 3: // become
                             actors[answer.arbiter_id].behavior=answer.actor_behavior;
@@ -481,7 +480,7 @@ void readSocket(void *client)
                             break;
                         case 10:
                             quit=true;
-                            gloabl_quit=true;
+                            global_quit=true;
                             fl=true;
                             break;
 
@@ -726,7 +725,7 @@ int create_actor(lua_State *luaVM)
     char arbiterId[STR_SIZE];
     strcpy(arbiterId,client->generateArbiterId());
 
-    /*char arbiter_self[STR_SIZE];
+    char arbiter_self[STR_SIZE];
     lua_getglobal(luaVM,"self");
     int ind=lua_gettop( luaVM );
     int is_nil=lua_isnil(luaVM, ind);
@@ -739,7 +738,7 @@ int create_actor(lua_State *luaVM)
     {
         strcpy(arbiter_self,"-1");
     }
-
+    /*
     char text[STR_SIZE];
     strcpy(text,"create: ");
     strcat(text,arbiterId);
@@ -747,7 +746,7 @@ int create_actor(lua_State *luaVM)
     sendMonitoring(0,text,arbiter_self);*/
     //stopWaitForContinue();
 
-    sendAnswer(1,arbiterId,act);
+    sendAnswer(1,arbiterId,act,arbiter_self);
 
     // Возвращаем в Lua скрипт индекс созданного актера
     lua_pushstring(luaVM, arbiterId);
@@ -785,7 +784,7 @@ int send_actor(lua_State *luaVM)
     act.behavior="";
     act.count=send_count;
 
-    /*char arbiter_self[STR_SIZE];
+    char arbiter_self[STR_SIZE];
     lua_getglobal(luaVM,"self");
     int ind=lua_gettop( luaVM );
     int is_nil=lua_isnil(luaVM, ind);
@@ -798,14 +797,14 @@ int send_actor(lua_State *luaVM)
     {
         strcpy(arbiter_self,"-1");
     }
-    char text[STR_SIZE];
+    /*char text[STR_SIZE];
     strcpy(text,"send: ");
     strcat(text,arbiterId);
     sendMonitoring(1,text,arbiter_self);*/
 
     //stopWaitForContinue();
 
-    sendAnswer(2,arbiterId,act);
+    sendAnswer(2,arbiterId,act,arbiter_self);
 
     return 0;
 }
@@ -828,13 +827,13 @@ int send_actor_obr(dispatcher_answer answer)
         strcpy(act.parameters[i],answer.actor_parameters[i]);
     if(func=="final_print")//Отправляем на сервер, что система отработала
     {
-        sendAnswer(5,arbiter_id,act);
+        sendAnswer(5,arbiter_id,act,answer.arbiter_parent);
         actors.clear();
         client->arbiter_num=0;
     }
     else if(func=="print") //Просто вывод
     {
-        sendAnswer(4,arbiter_id,act);
+        sendAnswer(4,arbiter_id,act,answer.arbiter_parent);
     }
     else
     {
@@ -971,7 +970,7 @@ int become_actor(lua_State *luaVM)
     char text[STR_SIZE];
     strcpy(text,"become: ");
     strcat(text,behavior.c_str());
-    sendMonitoring(2,text,arbiter_self);
+    sendMonitoring(2,text,arbiter_self,arbiter_self);
 
     stopWaitForContinue();
     if(currentState==4)
@@ -985,13 +984,13 @@ int become_actor(lua_State *luaVM)
 }
 
 
-void sendAnswer(int command, char arbiter_id[STR_SIZE], actor act)
+void sendAnswer(int command, char arbiter_id[STR_SIZE], actor act, char arbiter_parent[STR_SIZE])
 {
     //Создаем структуру для отправки
     dispatcher_answer answer;
     answer.command=command;
     strcpy(answer.arbiter_id,arbiter_id);
-
+    strcpy(answer.arbiter_parent,arbiter_parent);
     strcpy(answer.actor_behavior,act.behavior.c_str());
 
     answer.actor_par_count=act.count;
@@ -1074,7 +1073,7 @@ int main(int argc, char *argv[])
 
 
     //init_lua();
-    /*while(!gloabl_quit)
+    /*while(!global_quit)
     {
         //quit=client->readInput(); //Чтение с клавиатуры
         //Sleep(1);
