@@ -410,9 +410,14 @@ void readSocket(void *client)
         FD_SET(my_sock,&readfds);
         while(!fl)
         {
+
             stopWaitForContinue();
             if(currentState==4)
+            {
                 save();
+                currentState=2;
+                stopWaitForContinue();
+            }
 
            //Последний параметр - время ожидания. Выставляем нули чтобы
            //Select не блокировал выполнение программы до смены состояния сокета
@@ -961,6 +966,12 @@ int become_actor(lua_State *luaVM)
     sendMonitoring(2,text,arbiter_self);
 
     stopWaitForContinue();
+    if(currentState==4)
+    {
+        save();
+        currentState=2;
+        stopWaitForContinue();
+    }
 
     return 0;
 }
