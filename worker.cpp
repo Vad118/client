@@ -112,6 +112,7 @@ void get_actor_func_name(char &func_name, bool &spec_func_name, lua_State *luaVM
 
 void stopWaitForContinue(); // Функция останавливающая выполнение программы и ожидающая команды.
 void save();
+void clear();
 ///////////////////////
 class _client
 {
@@ -380,121 +381,125 @@ void sendMonitoring(int type,char text[STR_SIZE], char arbiter_id[STR_SIZE], cha
 
 void readSocket(void *client)
 {
-    char *part_str;
-    char buf[STR_SIZE]; //Строка получения данных
-    struct timeval tv;
+     char *part_str;
+     char buf[STR_SIZE]; //Строка получения данных
+     struct timeval tv;
      tv.tv_sec = 0;
      tv.tv_usec = 0;
-    fd_set readfds;
-    bool quit=false;
-    _client *my_client=(_client*) client;
-    SOCKET my_sock=my_client->my_sock;
-    SOCKET monitoringSock=my_client->monitoring_sock;
-    dispatcher_answer answer;
-    //Выполняем комманду select
-    //Ф-я проверяет статус сокета my_sock.
-    //Последний параметр 0 - ф-я select не замораживает
-    //Работу программы, а просто один раз читает состояние сокета
-    Sleep(1);
-    bool fl=false;
-
-    while(!quit)
-    {
-        fl=false;
+     fd_set readfds;
+     bool quit=false;
+     _client *my_client=(_client*) client;
+     SOCKET my_sock=my_client->my_sock;
+     SOCKET monitoringSock=my_client->monitoring_sock;
+     dispatcher_answer answer;
+     while(!global_quit)
+     {
+        //Выполняем комманду select
+        //Ф-я проверяет статус сокета my_sock.
+        //Последний параметр 0 - ф-я select не замораживает
+        //Работу программы, а просто один раз читает состояние сокета
         Sleep(1);
-        //Очищаем readfds
-        FD_ZERO(&readfds);
-        //Заносим дескриптор сокета в readfds
-        FD_SET(my_sock,&readfds);
-        while(!fl)
+        bool fl=false;
+
+        while(!quit)
         {
-            readCommands();
-            stopWaitForContinue();
-            if(currentState==4)
+            fl=false;
+            Sleep(1);
+            //Очищаем readfds
+            FD_ZERO(&readfds);
+            //Заносим дескриптор сокета в readfds
+            FD_SET(my_sock,&readfds);
+            while(!fl)
             {
-                save();
-                currentState=2;
+                readCommands();
                 stopWaitForContinue();
-            }
-
-           //Последний параметр - время ожидания. Выставляем нули чтобы
-           //Select не блокировал выполнение программы до смены состояния сокета
-           select(NULL,&readfds,NULL,NULL,&tv);
-           //Если пришли данные на чтение то читаем
-           int bytes_recv;
-           char tmp[STR_SIZE];
-           if(FD_ISSET(my_sock,&readfds))
-           {
-                //Проверяем не отключился ли сервер
-                char *pBuff = new char[sizeof(dispatcher_answer)];
-                if((bytes_recv=recv(my_sock,pBuff,sizeof(dispatcher_answer),0)) &&(bytes_recv!=SOCKET_ERROR))
+                if(currentState==4)
                 {
-                    memcpy(&answer,pBuff,sizeof(dispatcher_answer));
-                    //cout<<answer.actor_behavior<<endl;
-                    char text[STR_SIZE];
-                    switch(answer.command)
-                    {
-                        case 1: // Create
-                            actors[answer.arbiter_id].behavior=string(answer.actor_behavior);
-                            actors[answer.arbiter_id].count=answer.actor_par_count;
-                            for(int i=0;i<answer.actor_par_count;i++)
-                                strcpy(actors[answer.arbiter_id].parameters[i],answer.actor_parameters[i]);
-                            init_lua(scriptFileName,actors[answer.arbiter_id].luaVM); // Инициализируем интерпритатор для конкретного актера
-                            // Сохраняем index актера в глобальную переменную self
-                            lua_pushstring(actors[answer.arbiter_id].luaVM, answer.arbiter_id);
-                            lua_setglobal(actors[answer.arbiter_id].luaVM, "self");
-                            self_setted=true;
-
-
-                            strcpy(text,"create: ");
-                            strcat(text,answer.arbiter_id);
-                            sendMonitoring(0,text,answer.arbiter_id,answer.arbiter_parent);
-
-
-                            break;
-                        case 2: // Send
-                            send_actor_obr(answer);
-
-                            strcpy(text,"send: ");
-                            strcat(text,answer.arbiter_id);
-                            for(int i=0;i<answer.actor_par_count;i++)
-                            {
-                                strcat(text," ");
-                                strcat(text,answer.actor_parameters[i]);
-                            }
-                            sendMonitoring(1,text,answer.arbiter_id,answer.arbiter_parent);
-                            break;
-                        case 3: // become
-                            actors[answer.arbiter_id].behavior=answer.actor_behavior;
-                            actors[answer.arbiter_id].count=answer.actor_par_count;
-                            for(int i=0;i<answer.actor_par_count;i++)
-                                strcpy(actors[answer.arbiter_id].parameters[i],answer.actor_parameters[i]);
-                            break;
-                        case 6: //Первоначальная рассылка скрипта
-                            recv_file(my_sock,answer.worker_id); // Здесь имя файла заносится в глобальную scriptFileName
-                            init_lua(scriptFileName,g_LuaVM);
-                            break;
-                        case 7: //Инициализация скрипта(старт вычислений)
-                            start_lua("createAndInitActors"); //Всегда начинаем с функции creatAndInitActors
-                            break;
-                        case 10:
-                            quit=true;
-                            global_quit=true;
-                            fl=true;
-                            break;
-
-                    }
+                    save();
+                    currentState=2;
+                    stopWaitForContinue();
                 }
-                delete[] pBuff;
-           }
-           else
-               fl=true;
+
+               //Последний параметр - время ожидания. Выставляем нули чтобы
+               //Select не блокировал выполнение программы до смены состояния сокета
+               select(NULL,&readfds,NULL,NULL,&tv);
+               //Если пришли данные на чтение то читаем
+               int bytes_recv;
+               char tmp[STR_SIZE];
+               if(FD_ISSET(my_sock,&readfds))
+               {
+                    //Проверяем не отключился ли сервер
+                    char *pBuff = new char[sizeof(dispatcher_answer)];
+                    if((bytes_recv=recv(my_sock,pBuff,sizeof(dispatcher_answer),0)) &&(bytes_recv!=SOCKET_ERROR))
+                    {
+                        memcpy(&answer,pBuff,sizeof(dispatcher_answer));
+                        //cout<<answer.actor_behavior<<endl;
+                        char text[STR_SIZE];
+                        switch(answer.command)
+                        {
+                            case 1: // Create
+                                actors[answer.arbiter_id].behavior=string(answer.actor_behavior);
+                                actors[answer.arbiter_id].count=answer.actor_par_count;
+                                for(int i=0;i<answer.actor_par_count;i++)
+                                    strcpy(actors[answer.arbiter_id].parameters[i],answer.actor_parameters[i]);
+                                init_lua(scriptFileName,actors[answer.arbiter_id].luaVM); // Инициализируем интерпритатор для конкретного актера
+                                // Сохраняем index актера в глобальную переменную self
+                                lua_pushstring(actors[answer.arbiter_id].luaVM, answer.arbiter_id);
+                                lua_setglobal(actors[answer.arbiter_id].luaVM, "self");
+                                self_setted=true;
+
+
+                                strcpy(text,"create: ");
+                                strcat(text,answer.arbiter_id);
+                                sendMonitoring(0,text,answer.arbiter_id,answer.arbiter_parent);
+
+
+                                break;
+                            case 2: // Send
+                                send_actor_obr(answer);
+
+                                strcpy(text,"send: ");
+                                strcat(text,answer.arbiter_id);
+                                for(int i=0;i<answer.actor_par_count;i++)
+                                {
+                                    strcat(text," ");
+                                    strcat(text,answer.actor_parameters[i]);
+                                }
+                                sendMonitoring(1,text,answer.arbiter_id,answer.arbiter_parent);
+                                break;
+                            case 3: // become
+                                actors[answer.arbiter_id].behavior=answer.actor_behavior;
+                                actors[answer.arbiter_id].count=answer.actor_par_count;
+                                for(int i=0;i<answer.actor_par_count;i++)
+                                    strcpy(actors[answer.arbiter_id].parameters[i],answer.actor_parameters[i]);
+                                break;
+                            case 6: //Первоначальная рассылка скрипта
+                                recv_file(my_sock,answer.worker_id); // Здесь имя файла заносится в глобальную scriptFileName
+                                init_lua(scriptFileName,g_LuaVM);
+                                break;
+                            case 7: //Инициализация скрипта(старт вычислений)
+                                start_lua("createAndInitActors"); //Всегда начинаем с функции creatAndInitActors
+                                break;
+                            case 10:
+                                quit=true;
+                                global_quit=true;
+                                fl=true;
+                                break;
+
+                        }
+                    }
+                    delete[] pBuff;
+               }
+               else
+                   fl=true;
+            }
         }
+        answer.command=10;
+        char *pBuff = new char[sizeof(dispatcher_answer)];
+        memcpy(pBuff,&answer,sizeof(dispatcher_answer));
+        send(my_client->my_sock,pBuff, sizeof(dispatcher_answer), 0);
+
     }
-    answer.command=10;
-    char *pBuff = new char[sizeof(dispatcher_answer)];
-    memcpy(pBuff,&answer,sizeof(dispatcher_answer));
-    send(my_client->my_sock,pBuff, sizeof(dispatcher_answer), 0);
     closesocket(my_client->my_sock);
     closesocket(my_client->monitoring_sock);
     delete my_client;
@@ -1057,6 +1062,17 @@ void start_lua(char *func_name)
     lua_pcall(g_LuaVM, 0, 0, 0);
 }
 
+void clear()
+{
+    actors.clear();
+    if(g_LuaVM!=NULL)
+    {
+        lua_close(g_LuaVM);
+        remove(scriptFileName);
+        g_LuaVM=NULL;
+    }
+}
+
 //++++++++++++
 
 int main(int argc, char *argv[])
@@ -1079,11 +1095,6 @@ int main(int argc, char *argv[])
         if(client->readInput()) //Чтение с клавиатуры
             global_quit=true;
         //Sleep(1);
-    }
-    if(g_LuaVM!=NULL)
-    {
-        lua_close(g_LuaVM);
-        remove(scriptFileName);
     }
     delete client;
     return 1;
