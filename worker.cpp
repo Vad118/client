@@ -30,10 +30,10 @@ struct actor
 
 struct saveActor
 {
-     char behavior[STR_SIZE];
+     char behavior[100];
      char parameters[5][50];
      int count;
-     char id[STR_SIZE];
+     char id[10];
 
      int totalSaveCount;
      int totalUnreadMessages;
@@ -326,7 +326,7 @@ void recv_file(SOCKET my_sock,int worker_id)
 }
 
 
-void readCommands(void *client)
+void readCommands()
 {
     struct timeval tv;
      tv.tv_sec = 0;
@@ -334,8 +334,8 @@ void readCommands(void *client)
     fd_set readfds;
     _client *my_client=(_client*) client;
     SOCKET monitoringSock=my_client->monitoring_sock;
-    while(!global_quit)
-    {
+    //while(!global_quit)
+    //{
           //Очищаем readfds
           FD_ZERO(&readfds);
           //Заносим дескриптор сокета в readfds
@@ -359,9 +359,7 @@ void readCommands(void *client)
                }
                delete[] pBuff;
           }
-    }
-    closesocket(monitoringSock);
-    delete my_client;
+    //}
 }
 
 void sendMonitoring(int type,char text[STR_SIZE], char arbiter_id[STR_SIZE], char arbiter_parent[STR_SIZE]) //Отсылка сообщения для мониторинга
@@ -410,7 +408,7 @@ void readSocket(void *client)
         FD_SET(my_sock,&readfds);
         while(!fl)
         {
-
+            readCommands();
             stopWaitForContinue();
             if(currentState==4)
             {
@@ -498,6 +496,7 @@ void readSocket(void *client)
     memcpy(pBuff,&answer,sizeof(dispatcher_answer));
     send(my_client->my_sock,pBuff, sizeof(dispatcher_answer), 0);
     closesocket(my_client->my_sock);
+    closesocket(my_client->monitoring_sock);
     delete my_client;
 
 }
@@ -639,7 +638,7 @@ void stopWaitForContinue() // Функция останавливающая вы
 {
     while(currentState==2)
     {
-        // Просто висит цикл, если выслан стоп.
+        readCommands();
     }
     if(currentState==3)  // Если команда на следующий шаг, то опять меняем состояние, во всех остальных случаях продолжаем работу
         currentState=2;
@@ -668,12 +667,12 @@ void save()
     getUnreadMessages(unreadMessages,count_unread_messages);
 
     saveActor *saveActorsArray=new saveActor[actors.size()];
+    sendSaveCommand();
+
     serializeActorsForSave(saveActorsArray);
     sendSaveStruct(saveActorsArray,actors.size(),count_unread_messages);
 
     sendUnreadMessages(unreadMessages,count_unread_messages);
-
-    sendSaveCommand();
 
     currentState=previousState;
 }
@@ -1073,7 +1072,7 @@ int main(int argc, char *argv[])
     bool quit=client->connectToServer();
 
     _beginthread(readSocket,0,(void *)client); // Поток на чтение
-    _beginthread(readCommands,0,(void *)client);
+    //_beginthread(readCommands,0,(void *)client);
 
     while(!global_quit)
     {
