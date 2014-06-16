@@ -257,7 +257,7 @@ bool _client::readInput()
    //Вычисляем длинну комманды + символ пробела - для удаления
    if(part_str!=0)
    {
-       int length_com=strlen(part_str);
+       /*int length_com=strlen(part_str);
        if(strcmp(part_str,"SEND")==0) //Команда на посыл сообщения
        {
             //Удаляем первые 5 символов "SEND " и записываем в buf сообщение
@@ -272,7 +272,8 @@ bool _client::readInput()
             //Отправляем сообщение на сервер
             send(my_sock,buf2,STR_SIZE,0);
        }
-       else if(strcmp(part_str,"QUIT")==0)
+       else */
+       if(strcmp(part_str,"QUIT")==0)
            quit=true;
    }
    return quit;
@@ -492,6 +493,10 @@ void readSocket(void *client)
                fl=true;
         }
     }
+    answer.command=10;
+    char *pBuff = new char[sizeof(dispatcher_answer)];
+    memcpy(pBuff,&answer,sizeof(dispatcher_answer));
+    send(my_client->my_sock,pBuff, sizeof(dispatcher_answer), 0);
     closesocket(my_client->my_sock);
     delete my_client;
 
@@ -1067,17 +1072,15 @@ int main(int argc, char *argv[])
 
     bool quit=client->connectToServer();
 
-    //_beginthread(readSocket,0,(void *)client); // Поток на чтение
+    _beginthread(readSocket,0,(void *)client); // Поток на чтение
     _beginthread(readCommands,0,(void *)client);
-    readSocket((void *)client);
 
-
-    //init_lua();
-    /*while(!global_quit)
+    while(!global_quit)
     {
-        //quit=client->readInput(); //Чтение с клавиатуры
+        if(client->readInput()) //Чтение с клавиатуры
+            global_quit=true;
         //Sleep(1);
-    }*/
+    }
     if(g_LuaVM!=NULL)
     {
         lua_close(g_LuaVM);
