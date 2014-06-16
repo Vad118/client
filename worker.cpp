@@ -186,7 +186,7 @@ bool _client::connectToServer()
         // Подключение ко второму сокету
         if(connectToServerSecondSocket(client_id))
         {
-            cout<<"Connection Established."<<endl;
+            cout<<"Connection Established."<<endl<<"Client ID:"<<client_id;
             quit=false;
         }
     }
