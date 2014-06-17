@@ -186,7 +186,7 @@ bool _client::connectToServer()
         // Подключение ко второму сокету
         if(connectToServerSecondSocket(client_id))
         {
-            cout<<"Connection Established."<<endl<<"Client ID:"<<client_id;
+            cout<<"Connection Established."<<endl<<"Client ID:"<<client_id<<endl;
             quit=false;
         }
     }
@@ -468,10 +468,15 @@ void readSocket(void *client)
                                 sendMonitoring(1,text,answer.arbiter_id,answer.arbiter_parent);
                                 break;
                             case 3: // become
-                                actors[answer.arbiter_id].behavior=answer.actor_behavior;
+                                /*actors[answer.arbiter_id].behavior=answer.actor_behavior;
                                 actors[answer.arbiter_id].count=answer.actor_par_count;
                                 for(int i=0;i<answer.actor_par_count;i++)
-                                    strcpy(actors[answer.arbiter_id].parameters[i],answer.actor_parameters[i]);
+                                    strcpy(actors[answer.arbiter_id].parameters[i],answer.actor_parameters[i]);*/
+
+                                strcpy(text,"become: ");
+                                strcat(text,answer.actor_behavior);
+                                sendMonitoring(2,text,answer.arbiter_id,answer.arbiter_id);
+
                                 break;
                             case 6: //Первоначальная рассылка скрипта
                                 recv_file(my_sock,answer.worker_id); // Здесь имя файла заносится в глобальную scriptFileName
@@ -976,7 +981,7 @@ int become_actor(lua_State *luaVM)
 
     char arbiter_self[STR_SIZE];
     strcpy(arbiter_self,index.c_str());
-    char text[STR_SIZE];
+    /*char text[STR_SIZE];
     strcpy(text,"become: ");
     strcat(text,behavior.c_str());
     sendMonitoring(2,text,arbiter_self,arbiter_self);
@@ -987,6 +992,13 @@ int become_actor(lua_State *luaVM)
         save();
         currentState=2;
         stopWaitForContinue();
+    }*/
+    if(currentState>0) // Если включен мониторинг пересылаем become
+    {
+        act.behavior=behavior;
+        act.count=0;
+
+        sendAnswer(3,arbiter_self,act,arbiter_self);
     }
 
     return 0;
